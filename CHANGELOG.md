@@ -7,6 +7,31 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### media/video-reorder — `KAT-verified`
+
+- Added a wrap-aware RTP reorder buffer ahead of the H.264 access-unit
+  assembler. The relay delivers video RTP out of order (observed live as
+  1104, 1106, 1105 within single frames), and the assembler is strictly
+  ordered by contract — any sequence discontinuity means "damaged frame,
+  request a keyframe". Feeding relay reordering straight into it turned
+  ordinary swaps into loss: every swap discarded a frame and fired a PLI, so
+  the rendered frame rate collapsed to ~2.6fps against ~6fps sent. Reordering
+  is a transport concern and is now resolved before the assembler; genuine
+  loss is still declared after a bounded backlog so the PLI path is unchanged.
+- Video SRTCP reports are now sent when receiving video, not only when
+  sending it. Gating on `SenderStats().PacketsSent > 0` meant a receive-only
+  participant never reported anything about the peer's video stream, leaving
+  the peer's bandwidth estimator without feedback (observed: it settled at
+  320x180 / ~6fps).
+- Audio and video SRTCP report failures no longer return out of the periodic
+  RTCP goroutine. A single transient DataChannel error used to stop all
+  further reports, after which the relay declares the connection dead within
+  ~60s. Matches the fix already applied to the audio path.
+- Dropped the unconditional per-packet H.264 debug line. It was one log entry
+  per video RTP packet (~20/s), which on a mobile host burns CPU crossing into
+  the platform logger and flushes the log ring buffer before a call can be
+  diagnosed. The first 20 packets are still logged.
+
 ### media/group-runtime — `KAT-verified`
 
 - Hardened live group-call teardown by closing and detaching audio endpoints,
@@ -17,6 +42,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   rotation while iPhone portrait remains unchanged.
 
 ### api/upstream-group-call-adapter — `partial`
+
 - Added a latest-upstream-Whatsmeow compatibility layer for initial ad-hoc and
   group-bound calls, active-call participant invite/ring, active-group
   preaccept/accept, call links, approval waiting rooms, hand state, and
@@ -32,6 +58,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   validation remains pending.
 
 ### media/group_rtcp_feedback — `partial`
+
 - Corrected the wire contract from authenticated group traffic. Native
   post-recreation audio reports are 60-byte SR-only plaintexts with one RFC
   reception block plus an opaque eight-byte extension, protected to 74 bytes;
@@ -61,6 +88,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   length, leave/rejoin, retry, nil-input, and ticker-continuation KATs pass.
 
 ### web/initial_group_call — `partial`
+
 - Added the capture-backed web-console contract for one audio-only multi-person
   start through `Client.GroupCallWithOptions`, separate established-call
   participant invitations, and incoming roster replay before Answer-driven
@@ -77,6 +105,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   Focused and full nested web KATs pass. Live group audio E2E remains pending.
 
 ### api/initial_group_call — `partial`
+
 - Added the Task 1 capture-pinned Meowcaller API contract for an audio-only
   preselected group start, a selected-only public roster seed, stable public
   peer identity, and authoritative connected-device media readiness.
@@ -105,6 +134,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   installed. Live WhatsApp group audio E2E remains pending.
 
 ### voip/initial_group_call — `partial`
+
 - Added the immutable capture contract for one initial preselected group offer:
   call-scoped routing, ordered self-plus-selected roster, Opus 8/16 kHz,
   network medium 3, local-only capability, and optional group JID.
@@ -123,6 +153,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   because its CLI is not installed.
 
 ### web/group_call_outcomes — `KAT-verified`
+
 - Added the web-test contract for rendering every authoritative roster
   transaction and correlating a successful invite submission to a one-shot
   `participant_join` only after WhatsApp reports a connected PID-bearing device.
@@ -150,6 +181,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   because its CLI is not installed.
 
 ### api/group_call_state — `KAT-verified`
+
 - Added the capture-backed public contract for replayable, sanitized group roster
   transactions. Only `connected` participants with a PID-bearing selected device
   prove a join; invited/outgoing/receipt remain intermediate states.
@@ -162,6 +194,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   CLI is not installed.
 
 ### voip/group_key_epoch_fanout — `KAT-verified`
+
 - Added the two-sided-capture contract for generating one shared 32-byte group
   epoch when nominated by `rekey="1"`, Signal-encrypting it independently to
   every other connected PID-bearing device, sending one direct captured-shape
@@ -182,6 +215,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   ciphertext and other binary secrets from entering debug output.
 
 ### media/group_key_epoch — `KAT-verified`
+
 - Added the corrective two-sided-capture contract for one transaction-wide raw
   media epoch. The elected `enc_rekey` author distributes one shared root; local
   send keys derive with the self device ID and every receive key derives with
@@ -211,6 +245,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   SSRC, late-attachment, and concurrent-rekey KATs pass.
 
 ### voip/group_invite_accept — `KAT-verified`
+
 - Added the capture contract for accepting a directed invitation into an
   already-active ad-hoc call. The enriched offer seeds transaction-ordered group
   state before eager preaccept, and both preaccept and active-group accept use
@@ -239,6 +274,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   video-state, and hangup controls while preserving direct 1:1 routing.
 
 ### voip/group_rekey_directive — `KAT-verified`
+
 - Added the immutable two-sided capture contract for preserving the
   endpoint-personalized `group_info rekey="1"` nomination on the typed group
   snapshot. Key generation, recipient fan-out, retries, and media send-key
@@ -249,6 +285,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   was attempted but unavailable because its CLI is not installed.
 
 ### media/group_relay_refresh — `partial`
+
 - Added the capture-pinned contract and implementation for rotating group relay
   credentials over the existing active DataChannel while preserving RTP and
   stream identity.
@@ -268,6 +305,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   binding-key choice remains synthetic and the module remains partial.
 
 ### media/group_enc_rekey — `partial`
+
 - Added the capture-authoritative participant rekey state machine: transaction-
   ordered buffering, delayed per-author epochs, exact-device/unique-user author
   resolution, per-receiver raw-key installation, duplicate protection, and
@@ -281,6 +319,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   remains the end-to-end gate.
 
 ### web/group_participant_invite — `KAT-verified`
+
 - Added the capture-authoritative browser-console envelope for a multi-target
   control request and one transient submitted/failed result event per singular
   invite.
@@ -293,6 +332,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   pass. CodeRabbit was invoked twice but blocked by its free CLI rate limit.
 
 ### api/group_participant_invite — `KAT-verified`
+
 - Added the capture-authoritative envelope for singular
   `Call.AddParticipant(ctx, target)` delegation and an ordered plural
   convenience loop. The web example will retain one independent singular
@@ -314,6 +354,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   an ad-hoc group call without claiming group media support.
 
 ### voip/group_participant_invite — `partial`
+
 - Added the capture-authoritative datasheet for one active-call participant
   invitation. The proposed control path captures the established direct-call
   device capabilities, switches to the latest server roster after group
@@ -367,6 +408,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   remains explicitly marked for end-to-end validation.
 
 ### voip/group_invite_offer — `KAT-verified`
+
 - Added the capture-authoritative datasheet for the singular active-call invite
   offer. The two-person picker capture proves that each selected invitee gets an
   independent offer and transaction track; the proposed low-level builder
@@ -385,12 +427,14 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   full tests, build, vet, and CodeRabbit review are clean.
 
 ### voip/group_call_state — `planned`
+
 - Added the capture-authoritative datasheet for transaction-ordered group roster,
   relay, and `CALLID@call` routing state. The proposed envelope stores one parsed
   snapshot, preserves direct routing until group state exists, and refuses to
   recreate a call for late post-terminate updates. No production code changed.
 
 ### voip/group_call_state — `scaffolded`
+
 - Added whatsmeow commit `507b4bd`: the internal full-snapshot state envelope,
   `applyGroupUpdate` and `signalingTarget` three-line stubs, and a six-case
   capture-derived vector covering direct routing, transaction gaps, ad-hoc
@@ -399,6 +443,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   until both state bodies are implemented; build, vet, and all other tests pass.
 
 ### voip/group_call_state — `partial`
+
 - Added whatsmeow commit `63dc174`: `applyGroupUpdate` now holds the call-state
   lock, refuses missing calls and equal/older transactions, and atomically stores
   the complete newer snapshot. `TestApplyGroupUpdateCorpus` runs and passes all
@@ -407,6 +452,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   no findings when based on the local scaffold commit.
 
 ### voip/group_call_state — `KAT-verified`
+
 - Added whatsmeow commit `5a6350b`: `signalingTarget` preserves participant
   routing for direct calls and switches to `CALLID@call` after an authoritative
   group snapshot is accepted, including ad-hoc groups with no group JID.
@@ -416,6 +462,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   two reviewed function bodies and their KAT split.
 
 ### voip/group_update_ingest — `planned`
+
 - Restored the minimal datasheet template and group-call module registry for the
   capture-driven build. The human reviewer approved the immutable capture corpus
   as authoritative; the datasheet pins four raw JSONL boundaries by SHA-256 and
@@ -423,6 +470,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   production code changed.
 
 ### voip/group_update_ingest — `scaffolded`
+
 - Added whatsmeow commit `285aa8b`: the `CallGroupUpdate` event envelope,
   three-line `onCallGroupUpdate` handler stub, and four-case sanitized capture
   vector. `TestGroupUpdateIngestionCorpus` is intentionally skipped until the
@@ -431,6 +479,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   behavior.
 
 ### voip/group_update_ingest — `scaffolded`
+
 - Reconciled the datasheet with the now-verified group-state module. The proposed
   handler parses each update, delegates monotonic acceptance to
   `applyGroupUpdate`, dispatches only accepted typed snapshots, and keeps
@@ -439,6 +488,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   production code changed.
 
 ### voip/group_update_ingest — `KAT-verified`
+
 - Added whatsmeow commit `f676cf1`: `group_update` now routes through the call
   dispatcher, parses into the typed snapshot, delegates monotonic acceptance to
   `applyGroupUpdate`, and emits `CallGroupUpdate` only for accepted state.
@@ -456,6 +506,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   The scaffold-to-final diff matches the reviewed handler and dispatcher scope.
 
 ### meowcaller — use whatsmeow's first-class call API
+
 - Whatsmeow now owns 1:1 call signaling, call-key exchange, relay election, mute events,
   and independent video-flow transitions. Meowcaller consumes the typed handoff events
   and remains responsible for RTP/SRTP, MLow, H.264 framing, reactions, and diagnostics.
@@ -463,22 +514,24 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 - Moved the QR-pairing browser call console into the standalone `examples/web` module.
 
 ### meowcaller — refine the video API to mirror the audio Source/Sink model
+
 - Reshaped the ad-hoc video surface into the same shape as audio (whatsmeow-style callback
   registration + a Sink interface), so it reads like any mainstream media API:
-  - **Receive**: `Call.ReceiveVideo(sink VideoSink)` (mirrors `Call.Receive`), with `VideoSink`
-    (`WriteVideo`/`Close`), a `VideoSinkFunc` callback adapter (mirrors `SinkFunc`), and a
-    built-in `AnnexBRecorder(path)` that records the peer's H.264 to a `.h264` file — the video
-    analog of `WAVRecorder`.
-  - **Send**: `Call.SendVideo(accessUnit []byte) error` — push one encoded H.264 access unit
-    (Annex-B), the way you'd write a sample to a track; returns an error if media isn't up.
-  - **State**: `Call.OnVideoState(func(VideoState))` with a typed `VideoState{Active, Upgrade,
-    Orientation, Raw}`, replacing the raw `(state, orientation int)` tuple.
-  - `Call.IsVideo()` unchanged.
-  Replaces `OnVideoFrame` / `SendVideoFrame` / the int-tuple `OnVideoState`. Library carries
-  only the types (`video.go`); the WebCodecs bridge stays in `examples/cli/video.go`. Lib +
-  CLI build, tests green.
+    - **Receive**: `Call.ReceiveVideo(sink VideoSink)` (mirrors `Call.Receive`), with `VideoSink`
+      (`WriteVideo`/`Close`), a `VideoSinkFunc` callback adapter (mirrors `SinkFunc`), and a
+      built-in `AnnexBRecorder(path)` that records the peer's H.264 to a `.h264` file — the video
+      analog of `WAVRecorder`.
+    - **Send**: `Call.SendVideo(accessUnit []byte) error` — push one encoded H.264 access unit
+      (Annex-B), the way you'd write a sample to a track; returns an error if media isn't up.
+    - **State**: `Call.OnVideoState(func(VideoState))` with a typed `VideoState{Active, Upgrade,
+Orientation, Raw}`, replacing the raw `(state, orientation int)` tuple.
+    - `Call.IsVideo()` unchanged.
+      Replaces `OnVideoFrame` / `SendVideoFrame` / the int-tuple `OnVideoState`. Library carries
+      only the types (`video.go`); the WebCodecs bridge stays in `examples/cli/video.go`. Lib +
+      CLI build, tests green.
 
 ### meowcaller — ack the video upgrade with `type="video"` (fix mid-call audio→video upgrade)
+
 - **Diagnosis** (live diag dump): on a mid-call `<video state="11">` upgrade, meowcaller acked
   with whatsmeow's generic **typeless** `<ack class="call">`, whereas the real WhatsApp client
   acks with **`type="video"`**. Without the typed ack the sender treats the upgrade as
@@ -492,6 +545,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   candidate is an explicit `<video>` accept reply.
 
 ### mlow — decode the 0x92 SplitRed multi-frame container (video-call audio fix) — `KAT-verified`
+
 - `MlowDecoder.Decode` now detects the `0x92 <count>` SplitRed container WhatsApp uses in
   video calls (DTX on): several sequential 60 ms MLow frames packed length-delimited in one
   RTP payload. meowcaller previously decoded the raw container as a bare frame —
@@ -502,6 +556,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   `feat/video-calls` `decoder.go`; origin is the whatsapp-rust MLow decoder.
 
 ### meowcaller — bidirectional video media + orientation, based on WaCalls
+
 - **Receive (confirmed live)**: `engine.runMedia` demuxes the recv loop by RTP payload type
   — H.264 (PT 97) → a second WARP pipeline on the video SSRC (participant slot 2) →
   SRTP-unprotect → `rtp.H264Depacketizer` → Annex-B reassembly on the marker →
@@ -511,7 +566,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   (`rtp.SplitAnnexB` → `PackageH264NALU`) into PT-97 RTP (video SSRC, marker on the last
   NAL, 90 kHz / 15 fps), E2E-SRTP-protects it via the new `MediaPipeline.ProtectRTP`, and
   sends it to the relay. Ported from WaCalls `callmanager_video.FeedCapturedVideo`.
-  meowcaller carries *encoded* H.264 — no pure-Go encoder (the browser encodes).
+  meowcaller carries _encoded_ H.264 — no pure-Go encoder (the browser encodes).
 - **Orientation**: inbound standalone `<video>` stanzas are dispatched in `onCallRaw` →
   `engine.onVideoStanza` → `Call.OnVideoState(state, orientation)`; the example bridge
   rotates the displayed canvas by orientation × 90°.
@@ -525,6 +580,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   emits a `video` diag stream per inbound frame.
 
 ### signaling/video — `<video>` advertise + inbound detect, ported from WaCalls — `KAT-verified`
+
 - New `signaling/video.go`: optional `<video enc=h264 dec=h264 …>` advertisement on
   `BuildOffer`/`BuildAccept` (additive `Video bool` on the params — the audio path is
   unchanged), and `OfferHasVideo(node)` to detect an inbound video call by the `<video>`
@@ -533,6 +589,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   detection. meowcaller's `CapabilityOffer` is already `…e4bb13`, matching the branch.
 
 ### rtp/h264 — H.264 RTP packetization, ported from WaCalls — `KAT-verified`
+
 - New `rtp/h264.go`: `PackageH264NALU` (single payload / FU-A fragmentation),
   `PackageH264STAPA`, `SplitAnnexB`, and `H264Depacketizer` — RFC 6184 H.264
   packetization/depacketization, the codec layer for video calls. **Ported verbatim from
@@ -543,6 +600,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   Credits). Framing-agnostic, so it drops in cleanly; the SRTP/relay integration follows.
 
 ### diag — engine emissions: keying/ssrc/srtp/rtp/media/relay/stun/meta streams
+
 - Wired exact `e.c.diag.Emit(...)` calls at the engine boundaries (nil-safe, so zero
   cost when diagnostics are off). `engine.go`: **keying** (outbound generated callKey,
   inbound decrypted callKey — raw hex) and **meta** (offer_sent/offer_received).
@@ -560,6 +618,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   a `diag` recorder KAT (JSONL output + nil-safety). build/vet/suite green.
 
 ### examples/cli — --diagdump <dir> flag (xmpp + log capture via a logger tee)
+
 - New developer flag `--diagdump <dir>` (parsed out of `os.Args` before the positional
   dispatch). When set, the CLI builds a `diag.Recorder`, tees the zerolog stream via
   `zerolog.MultiLevelWriter(console, diagSplitter)`, and passes
@@ -571,6 +630,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   follow. CLI build/vet green.
 
 ### diag — developer diagnostics recorder + WithDiagnostics client option
+
 - New `meowcaller/diag` package: a `Recorder` that writes exact, per-category call
   diagnostics to per-stream JSONL files (`<dir>/<stream>.jsonl`). Stdlib-only,
   thread-safe, nil-safe (every method no-ops on a nil `*Recorder`), lazy file open,
@@ -582,6 +642,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   Foundation only; CLI flag and engine emissions follow. build/vet/test green.
 
 ### meowcaller — accept only on the first mute_v2 (not on later mute-state changes)
+
 - The deferred `<accept>` is sent on the **first** `mute_v2` only (it arrives right
   after the relaylatency/transport). `onCallRaw` now gates on `acceptPending`: a later
   `mute_v2` — an in-call mute-state change (e.g. 1→0) — is logged at debug and ignored
@@ -591,6 +652,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   test.
 
 ### opus — implement voip_settings parse + codec selection
+
 - Landed the bodies scaffolded below. `ParseVoipSettings` json-decodes the
   stringly-typed blob (`encode.use_mlow_codec_v1`/`frame_ms`, `rc.target_bitrate`),
   defaulting `UseMlowCodecV1` to true unless the key is literally `"false"` (empty blob
@@ -601,21 +663,23 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   maintainer request.)
 
 ### opus — scaffold voip_settings parse + codec selection (mlow vs Opus lever)
+
 - First module of basic Opus support, picked when the server sets
   `encode.use_mlow_codec_v1=false`. New compiling surface, bodies are TODO:
   `signaling.VoipSettings` + `signaling.ParseVoipSettings` (the codec-relevant subset
   of the `<voip_settings>` JSON blob) and `AudioCodec` (`AudioCodecMlow`/`AudioCodecOpus`)
-  + `selectAudioCodec` in the root package. `engineCall` gains a `codec` field, and
-  `onOffer` (inbound) / `onCallAck` (outbound) now run `applyVoipSettingsCodec` to find
-  the blob (`findChild`), parse it, and record the per-call codec — inert today (parser
-  stub → defaults to MLow), so the live MLow path is unchanged. **Original glue, not a
-  port:** the whatsapp-rust reference does not read `use_mlow_codec_v1` (it steers onto
-  Opus by advertising only `<audio rate=8000>`), so the parser/selector carry no
-  `// Source of truth:` line. KATs (`TestParseVoipSettings`/`...Opus`,
-  `TestSelectAudioCodec`) wired to the captured sample blob and `t.Skip`-blocked on the
-  stubs. State: **scaffolded**. build/vet clean, suite green.
+    - `selectAudioCodec` in the root package. `engineCall` gains a `codec` field, and
+      `onOffer` (inbound) / `onCallAck` (outbound) now run `applyVoipSettingsCodec` to find
+      the blob (`findChild`), parse it, and record the per-call codec — inert today (parser
+      stub → defaults to MLow), so the live MLow path is unchanged. **Original glue, not a
+      port:** the whatsapp-rust reference does not read `use_mlow_codec_v1` (it steers onto
+      Opus by advertising only `<audio rate=8000>`), so the parser/selector carry no
+      `// Source of truth:` line. KATs (`TestParseVoipSettings`/`...Opus`,
+      `TestSelectAudioCodec`) wired to the captured sample blob and `t.Skip`-blocked on the
+      stubs. State: **scaffolded**. build/vet clean, suite green.
 
 ### meowcaller — preaccept eagerly on inbound offer (preparation step)
+
 - `<preaccept>` is now sent the moment an inbound offer arrives (in `onOffer`),
   independent of the later Answer/Reject decision — it is a preparation step that keeps
   the offer alive and joins the relay election while the integrator decides (a call the
@@ -625,6 +689,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   recipe (preaccept → relaylatency → wait-for-`mute_v2` → accept).
 
 ### mlow — move per-frame encode/decode logs from debug to trace
+
 - The routine per-frame encode/decode logs (`encode frame`/`encode frame: done`,
   `decode frame`/`decode active frame`, the per-frame "emitting silence" outcomes,
   `red depack: done`) fired ~50×/sec at debug level and flooded a live call. Moved
@@ -634,6 +699,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   detail remains under `MEOW_LOG_LEVEL=trace`. KATs green.
 
 ### meowcaller — implement the managed calling API; collapse the CLI example
+
 - Filled the managed engine (`engine.go` + `engine_media.go`) by lifting the entire
   calling orchestration out of `examples/cli` into the library: signaling (offer /
   preaccept / accept-deferred-until-`mute_v2` / relaylatency election / ack-relay /
@@ -651,6 +717,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   uses whatsmeow `DangerousInternals` pending its promotion to stable upstream API.
 
 ### meowcaller — scaffold the managed calling API (Client/Call/Player/audio)
+
 - Began lifting the entire calling orchestration out of `examples/cli` into a managed,
   high-level library API so consumers write a handful of lines instead of hand-rolling
   signaling/relay/media. New compiling surface: `Client` (`NewClient(wa)`, `Call`,
@@ -663,6 +730,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   the calling API; the codec stays light under `meowcaller/mlow`). Build/vet/KATs green.
 
 ### examples — move mlowtest under examples/mlow; rename voip example to cli
+
 - Moved `cmd/mlowtest` → `examples/mlow` (stays in the root module — it only imports
   `mlow`) and removed the now-empty `cmd/`. Renamed the `examples/voip` example module
   → `examples/cli` (go.mod module path, README, and the in-tool command name updated;
@@ -671,12 +739,14 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   `.gitignore` (`/mlowtest` → `/mlow`). Both modules build/vet/test clean.
 
 ### docs — remove datasheets, PLAN/MODULES/GLOSSARY; prune coderabbit config
+
 - Removed the internal build-protocol docs: the `datasheets/` directory (30 files),
   `PLAN.md`, `MODULES.md`, and `GLOSSARY.md`. Dropped the now-obsolete
   `!datasheets/**` path filter (and its comment) from `.coderabbit.yaml`, keeping the
   generated-protobuf exclusion. No code touched; build/tests unaffected.
 
 ### docs — codify code style + logging conventions in AGENTS.md
+
 - Added a binding **Code style and logging** section (and matching "what never
   happens here" bullets) to `AGENTS.md`: the style supplements (`any`, initialism
   casing, `var x T`, indent-error-flow), errors-over-crashes (library never panics
@@ -686,6 +756,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   no-emoji form, and the level definitions. Documentation only.
 
 ### lib — propagate sanitized opt-in zerolog debug/trace across the stack
+
 - Rolled the `session` logging convention out to every library package — `mlow`,
   `srtp`, `rtp`, `stun`, `signaling`, `relay`, `util` — so the whole call + codec
   path emits debug/trace. Stateful types (`RtpStream`, `SframeSession`,
@@ -703,6 +774,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   audit). All 28 module KATs stay green; `go build`/`vet`/`test`/`gofmt` clean.
 
 ### session — opt-in sanitized zerolog diagnostics (field-on-type)
+
 - Established the repo-wide library logging convention on the root package
   (`MediaPipeline`, `CallSession`): a `log zerolog.Logger` field set via an additive
   `WithLogger(l)` functional option (`logging.go`), defaulting to `zerolog.Nop()` so
@@ -714,6 +786,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   KAT green, no behavior change.
 
 ### examples/voip — migrate CLI logging to structured zerolog (no emoji)
+
 - Replaced the stdlib `log`/`Printf` calls (and all decorative emoji) across
   `main.go`, `call.go`, `media.go`, `loopback.go` with structured **zerolog** per
   the Beeper Go Guidelines. As the top-level program the command configures one
@@ -732,12 +805,14 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   rtp, stun, relay, and the pipeline.
 
 ### audit — behavioral validation against the Rust reference (multi-agent)
+
 - Ran a 28-module Go-vs-Rust behavioral audit (KAT + line-for-line fidelity +
   adversarial refutation). Result: **0 real behavioral divergences**; the flagged
   items were datasheet staleness, a provable CDF-accessor equivalence (#16 LR
   filt), and one genuine stub (#20). Fixes below.
 
 ### mlow/celp — drop dead smplCelpUvGain; pin + refresh mlow-celp datasheet
+
 - Refreshing `mlow-celp.md` to the current `smpl_celp.rs` surfaced that the
   reference deleted three unused helpers as dead code (`e7b106d`):
   `smpl_reverse_into`, `smpl_interpol`, `smpl_celp_uv_gain`. Two were never ported;
@@ -746,8 +821,9 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   /`uvGainIdxLen` keep their live users). Datasheet pinned at 41095d4.
 
 ### datasheets — pin + refresh all mlow datasheets to 41095d4
+
 - All 16 mlow datasheets (#01–#16) now carry the `Reference pinned at:
-  41095d4e6ba4610e054e9ede3af1d5e88a83faee` line. 8 had current verbatim and only
+41095d4e6ba4610e054e9ede3af1d5e88a83faee` line. 8 had current verbatim and only
   needed the pin (rangecoder, toc, lpc, pulse, gains, lsf_quant, vad, red); 8 had
   drift and were refreshed to byte-identical current reference source: lsf, mem
   (smpl_mem seed-build + table relocated to silk_lsf_cos_tab.rs), noise (perc FFT
@@ -757,24 +833,28 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   the Go was already KAT-verified against the current reference.
 
 ### srtp/sframe — implement DeriveWarpAuthKey (#20, KAT-verified)
+
 - Ported `derive_warp_auth_key`: `len==32` guard then HKDF-SHA256(empty salt, ikm
   = callKey, info = "warp auth key", 32). Was a `(nil,nil)` stub. Added a KAT
   against an independently computed HKDF-SHA256 vector — passes. Closes the #20
   functional gap.
 
 ### mlow/noise — FMA-defeat casts in smplGetEnv (#11)
+
 - Wrapped the four load-bearing products in `smplGetEnv`'s loop in `float32(...)`
   so Go can't fuse `a*b + c` into a single-rounding FMA (the reference rounds each
   multiply separately). No observed divergence before, but the protective casts
   AGENTS.md mandates were missing. gennoise KAT still passes.
 
 ### MODULES.md — status corrections from the audit
+
 - #08 pitch: was `verified (decode; estimator scaffolded)` — the estimator is
   KAT-verified (`pitchio_ground_truth.json`); corrected to reflect that.
 - #13 synth: was `verified (...)` but `TestSynth` is `t.Skip`'d (no standalone
   `SynthInternalFrame` vector); corrected to `partial` per the status rule.
 
 ### call — module #28 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
+
 - Implement the `CallRegistry` (root package `meowcaller`, porting `src/voip/registry.rs`):
   the thread-safe per-call map with `Insert`/`SetMediaTask`/`Phase`/`Transition`/
   `Snapshot`/`ActiveCount`/`Remove`/`AbortAll`, over a `sync.Mutex` + `map[string]*callEntry`.
@@ -788,6 +868,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   registry (#01–#28).**
 
 ### session — module #27 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
+
 - New root package `meowcaller` porting `src/voip/session.rs`: the `CallSession`
   phase state machine (validated transitions — `Ended` sink, `Idle→Calling` only when
   outgoing, the linear chain, idempotent self-loop) and `MediaPipeline`, which
@@ -796,7 +877,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   internally via `RecvRocTracker`). Built on whatsmeow `types.JID`. **Error-based**
   per the lower modules: `NewMediaPipeline`/`ProtectAudio` return `error`;
   `UnprotectAudio` keeps the reference's `Option` shape as `(rtp.RtpHeader, []byte,
-  bool)`. KAT (inline, synthetic LIDs — no PII) passes: both lifecycle tables, the
+bool)`. KAT (inline, synthetic LIDs — no PII) passes: both lifecycle tables, the
   pipeline round-trip, and the **send=self-LID / recv=peer-LID ciphertext pinning**
   (the interop-load-bearing key direction). Composition only — the byte-level crypto
   is vector-pinned in its own modules. Datasheet refreshed to the current source
@@ -806,6 +887,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   **KAT-verified.**
 
 ### relay — module #26 (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
+
 - New `relay` package porting `src/voip/transport.rs`: `ClassifyRelayPacket` (the
   pure first-byte STUN/RTCP/RTP demux) is **KAT-verified** against the reference's
   inline assertions. The media transport — `ConnectRelayMedia`
@@ -822,6 +904,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   re-mapped to `src/voip/transport.rs` (was mis-flagged UNMAPPED).
 
 ### signaling/stanza — module #25 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
+
 - New `signaling` package porting `stanza.rs`: the call-control builders
   (`BuildOffer`/`Accept`/`Preaccept`/`Transport`/`RelayLatency`/`Heartbeat`/
   `Terminate`/`MuteV2`/`Reject`) + `EncodeLatency` + the capability blobs. Built on
@@ -836,6 +919,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   (one nil-deref finding fixed by the value-JID change). **KAT-verified.**
 
 ### srtp/warp — module #24 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
+
 - Added receive-side WARP MESSAGE-INTEGRITY verification with constant-time tag
   comparison. The existing byte-exact tag KAT now also rejects a changed
   participant key, tag, ROC, empty tag, and oversized tag. **KAT-verified.**
@@ -854,6 +938,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   session/relay).
 
 ### session/authenticated-receive — KAT-verified (reference `2f001b5a3d6374cc5cf7177792c2a81f87a54080`)
+
 - Split receive ROC handling into pure estimate and authenticated commit operations.
   The reference staircase KAT proves unauthenticated packets cannot advance the
   receiver rollover counter. `MediaPipeline.UnprotectAudio` now verifies the
@@ -862,6 +947,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   receivable. **KAT-verified.**
 
 ### media/group-receive — KAT-verified
+
 - Added the capture-pinned envelope and implementation for connected-device/PID
   activation, deterministic primary-audio SSRC routing, per-participant
   authenticated receive/ROC/decoder state, original-peer PID 0 continuity,
@@ -880,6 +966,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   contract. No runtime behavior changed.
 
 ### media/group-audio-mixer — partial
+
 - Implemented bounded participant queues, independent two-frame prefill, 10 ms mix
   ticks, hard clipping, roster-gated departure cleanup, and single-speaker gain
   preservation. The deterministic composition KATs pass. The media loop now clocks
@@ -890,6 +977,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   public 960-sample sink contract. Live multi-speaker playout remains E2E unvalidated.
 
 ### voip/group-enc-rekey-ingest — partial
+
 - Added the capture-pinned signaling datasheet for typed keygen-v2 `enc_rekey`
   parsing, existing Signal DM decryption reuse, 32-byte raw-key dispatch, delayed
   transaction handling, and sanitized failure behavior. Live call
@@ -904,6 +992,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   post-fix authenticated group-audio retest remains pending.
 
 ### rtp/ssrc — module #23 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
+
 - `rtp` package gains SSRC derivation + participant-LID helpers:
   `DeriveWasmParticipantSsrc` (HKDF-SHA256 with salt=slot-word LE32, ikm=callId,
   info=lid → LE u32) via the #17 `util.HKDFSHA256`, `DeriveWasmRelayStreamSsrcs`
@@ -916,6 +1005,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   **KAT-verified.**
 
 ### rtp — module #22 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
+
 - New `rtp` package porting `rtp.rs` + `rtcp.rs`: the WhatsApp RTP header (16-byte
   speech / 20-byte `0xdebe` DTX) encode/parse, the Opus payload classifiers
   (`IsOpusDtxPayload`/`IsOpusMlowSpeechPayload`/`IsOpusPrimingPayload`/...), the
@@ -931,11 +1021,13 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   **KAT-verified.**
 
 ### srtp/warp — prerequisite scaffold (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
+
 - Scaffolded `AudioPiggybackExtensionFor` + `WarpPiggybackStartPacket` in the `srtp`
   package so #22 rtp compiles against the real warp surface (AGENTS.md directive #5).
   Body is a TODO stub; lands with module #24. **scaffolded.**
 
 ### stun — module #21 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
+
 - New `stun` package: the RFC 5389 TLV encoder (`EncodeStunRequest` with HMAC-SHA1
   MESSAGE-INTEGRITY + CRC-32 FINGERPRINT), the WASM/APK allocate builders
   (`BuildWasmStunAllocateRequest`/`BuildAndroidStunAllocateRequest`), the WhatsApp
@@ -955,6 +1047,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   returns). **KAT-verified.**
 
 ### srtp/sframe — module #20 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
+
 - `srtp` package gains SFrame E2E media encryption: per-participant key derivation
   (`FormatSframeParticipantID`/`SframeInfoLabel`/`DeriveE2eSframeKeyForParticipant`),
   the `SframeSession` with `Encrypt`/`Decrypt`, and the AES-128-GCM (non-standard
@@ -975,6 +1068,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   it is implemented and validated under #24 warp.
 
 ### srtp/hbh — module #19 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
+
 - `srtp` package gains the hop-by-hop SRTP path: `SrtpKeyingMaterial` /
   `LibsrtpSessionKeys` types, the two-stage WA-SFU KDF derivation
   (`DeriveHbhSrtpKeyUplink`/`Downlink`, `KeyingFromHbhKey*`), libsrtp session-key
@@ -990,6 +1084,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   ICM nonce, and AES-ICM cipher_out + round-trip. CodeRabbit: clean. **KAT-verified**.
 
 ### srtp/e2e — module #18 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
+
 - New `srtp` package: `E2eSrtpKeys` + `DeriveE2eKeys`/`DeriveE2eKeysFromRaw`
   (HKDF-SHA256 master via the #17 `util.HKDFSHA256` → AES-CM PRF session keys),
   `BuildE2eRtpIV`, `CryptPayload` (AES-128-CTR), and the `RocTracker` (send,
@@ -1003,11 +1098,12 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   wraps/reorder/late-packet. CodeRabbit: clean. **KAT-verified**.
 
 ### util/hkdf — module #17 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
+
 - New `util` package: `HKDFSHA256(salt, ikm, info, length) ([]byte, error)` — the
   single HKDF-SHA256 extract-and-expand primitive every VoIP key schedule reduces
   to. Implemented over the **Go 1.25 stdlib `crypto/hkdf`** (zero new deps;
   `x/crypto` avoided per the protobuf-only mandate). **Deviates from the reference**:
-  where the Rust `.expect()`/`debug_assert`s on the >8160-byte (255*32) bound, this
+  where the Rust `.expect()`/`debug_assert`s on the >8160-byte (255\*32) bound, this
   forwards the `crypto/hkdf` error so a bad length bubbles up instead of aborting the
   caller — `crypto/hkdf.Key` already returns `([]byte, error)`, so the wrapper just
   passes it through. KAT (`util/testdata/rfc5869_hkdf_sha256.json`, RFC 5869 Appendix
@@ -1015,6 +1111,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   clean. **KAT-verified**.
 
 ### mlow — seed-ROM table architecture (port of the upstream refactor)
+
 - **pitch tables** now expand from a 2.3 KB seed ROM (`pitch_seed.bin`) instead of
   the ~33 KB `smpl_pitch_tables.json` blob. `pitch_seed.go` ports `smpl_pitch_seed.rs`:
   manual protobuf parse → range-decode the blocksegs bitstream (217 blocksegs) →
@@ -1058,20 +1155,22 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   and helpers are removed. Full decode/encode KAT suite stays bit-exact.
 
 ### mlow — upstream sync (reference `ed12f35..41095d4`): robustness guards
+
 - Ported the two codec-behavioral fixes from the upstream review commit `543302e`
   (everything else in the 9 new reference commits is non-behavioral — see below):
-  - `pulse.go`: zero the whole subframe split when either half's `smplSplit3537`
-    returns the corrupt `-1` sentinel (C `smpl_pulse_coding`), instead of copying
-    `-1` into `Subfr`.
-  - `vad.go`: reject a short capture buffer up front in `ProcessPacket` so the
-    fixed-stride frame loop can't index out of range.
-  - tightened `TestEncodeRoundTripsATone` to `> 0.7` (matches upstream; we get 0.89).
+    - `pulse.go`: zero the whole subframe split when either half's `smplSplit3537`
+      returns the corrupt `-1` sentinel (C `smpl_pulse_coding`), instead of copying
+      `-1` into `Subfr`.
+    - `vad.go`: reject a short capture buffer up front in `ProcessPacket` so the
+      fixed-stride frame loop can't index out of range.
+    - tightened `TestEncodeRoundTripsATone` to `> 0.7` (matches upstream; we get 0.89).
 - The other 8 upstream commits are non-behavioral for our port: a table-storage
   refactor (seed ROM vs blob — same table values), per-frame perf (scratch reuse,
   in-place CDF reads, FFT twiddle precompute — "codec output byte-identical"), typed
   errors / dead-code, and test-vector regeneration + comment cleanup.
 
 ### tooling — `mlowtest` CLI + file test script
+
 - `cmd/mlowtest`: `encode` (raw s16le mono 16 kHz → MLow `.bin`) and `decode`
   (`.bin` → WAV, or `-raw` s16le). The `.bin` container is `"MLW1"` + per-frame
   uint16 length-prefixed MLow frames.
@@ -1084,6 +1183,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   decoded by Go vs Rust → corr 1.000000.
 
 ### mlow/encoder — module #16 classifier + entropy coder KAT-verified (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
+
 - Ported the voiced/unvoiced classifier 1:1 from `smpl_signal_mode.rs`:
   `SmplGetSignalMode` (five voicing strengths — pitch correlation, VAD, spectral
   tilt, harmonicity, short lag — plus per-stream `VuvMode` hysteresis →
@@ -1113,6 +1213,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   signaling stack.
 
 #### encoder front-end build (toward Encode pcm→wire)
+
 - **smpl_perc ported + KAT-verified** (perc.go): the perceptual-weighting model
   (`PercModelState`/`SmplPercModel`/`SmplPercAc2a` — mixed-radix FFT power spectrum
   → bidirectional mel masking → perceptual LPC response) and the bitrate controller
@@ -1127,13 +1228,13 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   implemented. KAT `TestPitchEstimatorGroundTruth` (pitchio_ground_truth.json, 48
   active frames): **exact** `laginds`/`blockseg_idx`, pitchcorr max_err 7e-07,
   avg_lag exact, harm within 1.8e-07.
-- **smpl_celp CelpEncoder ported** (celp_enc.go, datasheet datasheets/mlow-celp.md):
+- **smpl_celp CelpEncoder ported** (celp*enc.go, datasheet datasheets/mlow-celp.md):
   the closed-loop excitation encoder — perceptual impulse response, ACB/LTP gain
   search (`calcAcbGain`), greedy + delayed-decision beam FCB pulse search
   (`smplFcbSearch`/`smplFcbSearchDeldec` with pitch-sharpening cross-terms +
   signature dedup), gain quant (`calcGainsV`/`celpQuantGainUv`), and the per-subframe
   orchestrator `EncodeSubframe` returning pulses/indices/reconstructed excitation.
-  Smoke KATs (`encode_{unvoiced,voiced,voiced_fractional_greedy}_runs`) pass: all
+  Smoke KATs (`encode*{unvoiced,voiced,voiced_fractional_greedy}\_runs`) pass: all
   search paths run and produce correctly-shaped output. Reuses cbAcbgains/acbgN/M.
   Full bit-correctness arrives with the end-to-end tone round-trip after wiring.
 - **analysis wiring → `Encode(pcm)` complete** (analysis.go): ported
@@ -1151,6 +1252,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   markers are cleared. CodeRabbit clean.
 
 ### mlow/decoder — module #15 KAT-verified (audible milestone) (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
+
 - Implemented the top-level `MlowDecoder` 1:1 from `decoder.rs`: RED strip → TOC
   routing (std-opus / SID / inactive → silence) → active-frame decode (3 chained
   internal frames: LSF → pulses → pitch/gains → reconstruct → CELP `SynthFrame`) →
@@ -1167,16 +1269,16 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   remains the only `// NOT VALIDATED` body. CodeRabbit: 2 findings (per-function
   Source-of-truth pins; correlation div-by-zero guard) → fixed, re-review clean.
 
-
 ### mlow/red — module #14 KAT-verified (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
+
 - Implemented `DepackSplitRed` 1:1 from `red.rs`: the SplitRed header run (redundant
   blocks `0x80|code`,`size`), the main marker, and frame extraction as zero-copy
   subslices, with the four sentinel errors. KAT `TestDepackSplitRed` covers the
   reference's inline cases (one redundant+main, header-only+main, empty, bare-frame
   rejection). CodeRabbit: 0 findings.
 
-
 ### mlow/vad — module #12 KAT-verified (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
+
 - Implemented the SILK VAD fixed-point port 1:1 from `smpl_vad.rs`: the SILK
   primitives (smulwb/smlawb/smulww/smulbb/smlabb, sat16, clz/ror/lin2log/sqrt_approx/
   sigm_q15, rshift_round), the 2-band allpass filterbank (incl. the in-place stages),
@@ -1188,8 +1290,8 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   rule that MODULES.md Status must track KAT reality (CR flags / agent fixes), and the
   stale-status corrections (rangecoder/mem/toc/lpc → verified).
 
-
 ### mlow/celpdec — CELP synthesis: excitation verified, full output e2e (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
+
 - Implemented the decoder-side C-float CELP synthesis (`CelpDecState.SynthFrame` +
   `lpcInterpol`, `acbDequant`/`acbSynthesize`, `pitchSharp`, `synLTPBasis`,
   `celpDecode`, `filtAR16`, `fcbGains`) and `CelpDecParams`, ported 1:1 from
@@ -1201,10 +1303,10 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   and HP-postfilter stages SynthFrame composes are each KAT-verified in their modules;
   the full combined PCM is validated end-to-end by the decoder. CodeRabbit: 0 findings.
 - Moved the CELP types out of synth.go into `celpdec.go`. `inbound_capture_frames.json`
-  + `exc_pre_lags.json` copied into testdata.
-
+    - `exc_pre_lags.json` copied into testdata.
 
 ### mlow/noise — gennoise core KAT-verified (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
+
 - Implemented the CELP noise-generator core 1:1 from `smpl_gennoise.rs`:
   `SmplGetNormalizedBitrate`, `SmplDecodeResnrg`, `NewNoiseGenerator`, and
   `SmplCelpGenNoise` with all its helpers (`smplRand` LCG, `smplGenRandPulses`,
@@ -1220,11 +1322,12 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   perc front-end + bitrate controller remain for the encoder module.
 
 ### mlow/postfilter — HP comb + harmonic KAT-verified (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
+
 - Implemented the post-LPC HP (pitch-harmonic) comb 1:1 from `smpl_harmcomb.rs`
   (`SmplHpPostfilter` + `SmplPfFir3`/`SmplFiltArma2`/`SmplGetHpCoefs` + the unrolled
   `pfFiltAR1`/`pfFiltAR2`/`pfFiltMA1`, `smplCalcHPCoefs`/`newCoefs`/`rampDn`) and the
   per-packet harmonic postfilter from `smpl_harm_postfilter.rs` (`SmplHarmPostfilter`
-  + `harmPostfilterCore`, the LP-filter bank, `harmFiltMA16Sym`).
+    - `harmPostfilterCore`, the LP-filter bank, `harmFiltMA16Sym`).
 - KATs `TestHpPostfilter` (hp_postfilter_vectors.raw) and `TestHarmPostfilter`
   (harm_postfilter_vectors.raw, both copied into testdata) pass within the i16 output
   LSB (1/32768) — the reference is -ffast-math so it's not bit-exact through the
@@ -1236,6 +1339,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   to avoid clashing with lsf_quant's `dotProd` / noise's `smplNrg`.
 
 ### mlow/synth — module #10 scaffold + NLSF reconstruction verified (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
+
 - Scaffolded the full low-band synthesis envelope (TODO stubs with `Source of truth:`
   pins spanning smpl_synth.rs / smpl_celpdec.rs / smpl_nrgres.rs): `SmplNLSF2A`,
   `SmplGainLin`, `SmplLTPFracGain`, `SmplExcGainState`, `SmplPitchSynth`,
@@ -1255,6 +1359,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   `HarmPostfilterState` from module #11 (not built); lands at #11 / #15 integration.
 
 ### mlow/synth — module #10 synth bodies implemented (NOT VALIDATED) (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
+
 - Ported the remaining self-contained synth bodies 1:1: `SmplNLSF2A` (+`smplNLSFPoly`),
   `SmplGainLin`, `SmplLTPFracGain`, `SmplLTPSubframePred` (+`smplFracLTP`/
   `smplExcGainApply`/`smplFir8`/`smplFloorF32`/`smplLPCSynthesis`), `SynthInternalFrame`,
@@ -1270,6 +1375,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   (directive #5). CodeRabbit: 0 findings.
 
 ### mlow/gains — module #09 KAT-verified (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
+
 - Implemented `DecodeSmplGains` 1:1 from `decode_smpl_gains`: main+delta gain CDFs,
   the gain reconstruction (deliberate adjacent-rodata read via the heap window), and
   the per-subframe bucketed nrgres CDF with the gain-derived sign-mask address shift.
@@ -1280,6 +1386,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 - No unbuilt requisites — the chain (LSF #05, pulses #08) was already done.
 
 ### mlow/pulse — module #08 KAT-verified (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
+
 - Implemented the excitation pulse decode 1:1 from `decode_smpl_pulses`: the
   triangular pulse-count prior (NB/config-0 path), the recursive subframe split
   (`smplSplit3537` via `mem.CDFAt` on g_cc-relative bases), the run-length magnitude
@@ -1293,6 +1400,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   block).
 
 ### mlow/pitch — module #07 decode KAT-verified (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
+
 - Implemented the decode side `DecodeSmplPitch` 1:1 from `decode_smpl_pitch`: the LTP
   gains loop (gain/filter CDFs from `mem.GPitch`+offsets, keyed on p6 and the
   `prev_*` predictors), the primary lag (absolute vs delta off `st.PrevLag`), the
@@ -1308,8 +1416,9 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   tolerance decision before it can be done.
 
 ### reference — all mlow runtime tables migrated to protobuf (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
+
 - Drove a reference refactor (`refactor(voip): store all mlow runtime tables as
-  protobuf`, `ed12f359a086b28e807ba236f0977af1000859fe`, pushed) migrating the three remaining postcard table blobs —
+protobuf`, `ed12f359a086b28e807ba236f0977af1000859fe`, pushed) migrating the three remaining postcard table blobs —
   `smpl_synth_tables`, `lsf_cb_dump`, `smpl_pitch_tables` — to zlib+protobuf
   (`tables.proto`), joining `smpl_tables` and the cc_blob. **Every** mlow runtime
   constant table is now protobuf, so each byte-identical blob loads in the Go port
@@ -1326,6 +1435,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   per-module proto messages/blobs land when each Go module is built.
 
 ### mlow/lsf_quant — module #06 KAT-verified (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
+
 - Implemented the encoder-side LSF vector quantizer: the VQ_temp Mahalanobis
   shortlist, the RD beam (`0.5*order*log2(werr)*RDw_adj + bits`) with per-coeff
   stage-2 clamps and the one-coeff-flip refinement, and the conditional path
@@ -1342,8 +1452,9 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   soft-divergence (module #07/#16).
 
 ### mlow/lsf — module #05 KAT-verified + protobuf LSF table asset (reference `c697c36ffa7875c304ceea9154be30b66cada914`)
+
 - **Reference change (pushed):** `refactor(voip): store the smpl LSF tables as
-  protobuf` (`c697c36ffa7875c304ceea9154be30b66cada914` on `feat/voip-media-stack`). Re-encoded the reference's
+protobuf` (`c697c36ffa7875c304ceea9154be30b66cada914` on `feat/voip-media-stack`). Re-encoded the reference's
   `smpl_tables.bin` from zlib+postcard to zlib+protobuf (`tables.proto`
   `SmplLsfTables`), mirroring the cc_blob, so the byte-identical blob is decodable
   in Go (postcard is Rust-only). Verified bit-identical decode: the protobuf
@@ -1364,6 +1475,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   `internal/tables` regenerated for the new messages; datasheet refreshed to `c697c36ffa7875c304ceea9154be30b66cada914`.
 
 ### mlow/mem — protobuf table blob (reference `b90291b1ae979d504adf71d9555b3daf5c7325b1`)
+
 - The reference now stores the cc_blob heap window as a zlib-compressed protobuf
   (`tables.proto`). meowcaller adopts the **shared schema**: embeds the reference's
   exact `smpl_cc_blob.bin` and decodes it through the generated `internal/tables`
@@ -1373,6 +1485,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   mem SOT permalinks re-pinned to `b90291b1ae979d504adf71d9555b3daf5c7325b1`.
 
 ### reference sync — local checkout to `oxidezap/whatsapp-rust-private`@`674e85164b35ca19115dfebcf605708d15951ee7`
+
 - Converted the local Rust reference into a real git checkout of
   `oxidezap/whatsapp-rust-private` (branch `feat/voip-media-stack`) and reset to the
   tip `674e85164b35ca19115dfebcf605708d15951ee7` (== our SOT pin; the public-repo permalinks are unchanged — commits
@@ -1384,25 +1497,26 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   crate). All built-module datasheets (toc, rangecoder, mem, lpc) are current.
 - `mlow-encoder` (#16, unbuilt): ~208 verbatim lines diverged because the encoder
   source was **reorganized** — old combined `analysis.rs` split into `analysis.rs`
-  + `smpl_pitch_enc.rs`, and the pitch estimator changed (the known ~0.03
-  divergence). Faithful refresh = restructuring to the new file layout, deferred to
-  when module #16 is built (local reference is now current, so it ingests correctly
-  then).
+    - `smpl_pitch_enc.rs`, and the pitch estimator changed (the known ~0.03
+      divergence). Faithful refresh = restructuring to the new file layout, deferred to
+      when module #16 is built (local reference is now current, so it ingests correctly
+      then).
 
 ### reference sync (patch `d441e5fa…current`)
+
 - Applied the upstream `wacore/src/voip/mlow/*.rs` source changes to the local
   reference. Net effect on **built** modules: none functional.
-  - `smpl_mem.rs`: loader refactored (runtime tables now zlib+postcard `.bin` via
-    new `smpl_tables_blob::load_blob`; the inline JSON parse became a `#[cfg(test)]`
-    generator helper). The `SmplMem` memory model and **all accessors are
-    byte-identical** → `mlow/mem` Go and tests unchanged. The heap-window data is
-    verified identical (same regions + `g_cc/g_nrg/g_pitch/clk`), so our embedded
-    `smpl_cc_blob.json` stays valid. Datasheet `mlow-mem.md` updated to the current
-    source and the packaging change; SOT permalinks stay pinned to the ported
-    commit `674e85164b35ca19115dfebcf605708d15951ee7…`.
-  - `toc.rs`, `rangecoder.rs`, `smpl_lpc.rs`, `silk_lsf_cos_tab.rs`, `smpl_perc.rs`
-    are **not** in the patch → `toc`, `rangecoder`, `mem` cosine table, and the
-    `lpc` scaffold/FFT-dependency are unaffected.
+    - `smpl_mem.rs`: loader refactored (runtime tables now zlib+postcard `.bin` via
+      new `smpl_tables_blob::load_blob`; the inline JSON parse became a `#[cfg(test)]`
+      generator helper). The `SmplMem` memory model and **all accessors are
+      byte-identical** → `mlow/mem` Go and tests unchanged. The heap-window data is
+      verified identical (same regions + `g_cc/g_nrg/g_pitch/clk`), so our embedded
+      `smpl_cc_blob.json` stays valid. Datasheet `mlow-mem.md` updated to the current
+      source and the packaging change; SOT permalinks stay pinned to the ported
+      commit `674e85164b35ca19115dfebcf605708d15951ee7…`.
+    - `toc.rs`, `rangecoder.rs`, `smpl_lpc.rs`, `silk_lsf_cos_tab.rs`, `smpl_perc.rs`
+      are **not** in the patch → `toc`, `rangecoder`, `mem` cosine table, and the
+      `lpc` scaffold/FFT-dependency are unaffected.
 - Not applied: the binary `.bin` blobs (patch lacks full index lines) and the
   `smpl_cc_blob.json` / `smpl_tables.json` deletions — we keep the JSON as our data
   source (the `.bin` are an upstream re-encoding of identical data).
@@ -1412,6 +1526,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   be re-ingested from the (now-current) local reference when each module is built.
 
 ### mlow/lpc
+
 - implemented: smplLPCInterpol/Idx (per-subframe NLSF interpolation) + lpcIsStable
   / lpcStabilize. nlsf2a is a caller-supplied closure (the encoder #16 passes
   synth's smpl_nlsf2a), so no synth dependency here. No direct vector — verified by
@@ -1440,6 +1555,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   front-end — lpc validates against lsf_quant_io.json + fe_dump.json.
 
 ### mlow/mem
+
 - implemented: SmplMem accessors (LE U8/U16/U32, signed I16/I32, out-of-region
   zero fallback, CDFAt 2-byte stride). Heap ROM loaded via go:embed from
   mlow/smpl_cc_blob.json (moved out of testdata per review) behind a sync.Once
@@ -1450,6 +1566,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   (silkLSFCosTabFIXQ12, 129 entries) transcribed verbatim.
 
 ### mlow/rangecoder
+
 - KAT-verified: decoder replays the 2000-op and 1500-op CDF scripts to the listed
   values; encoder re-encodes both byte-identically to rc_vectors.json (4/4 tests).
 - implemented: full RangeDecoder + RangeEncoder bodies (ec_dec/ec_enc) as a
@@ -1458,12 +1575,14 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   KAT tests wired to testdata/rc_vectors.json (decode + re-encode).
 
 ### mlow/toc
+
 - KAT-verified: ParseSmplTOC matches toc_vectors.json (256/256 byte values).
 - implemented: ParseSmplTOC body + standardOpusFrameMs helper.
 - scaffolded: SmplTOC type + ParseSmplTOC signature + exhaustive KAT test wired
   to testdata/toc_vectors.json (256 byte values).
 
 ### Planning
+
 - Datasheets for all 28 modules under `datasheets/`: each carries the reference
   source verbatim, the Go envelope (signatures only), and implementation
   suggestions. Verbatim source verified complete (line-count match vs source);
