@@ -658,7 +658,7 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 	vsender := &videoSender{
 		pipe: txVideoPipe, stream: rtp.NewVideoRtpStream(videoSelfSsrc, defaultVideoRtpStepSamples),
 		ch: ch, ssrc: videoSelfSsrc, callID: callID, keyframeRequired: true,
-		log: log, diag: e.c.diag,
+		log: log, logReady: true, diag: e.c.diag,
 	}
 	txAppDataPipe, err := NewMediaPipeline(callKey, selfLID, peerLID, appDataSelfSsrc, FrameSamples, WithLogger(log))
 	if err != nil {
@@ -1315,8 +1315,39 @@ type videoSender struct {
 	active           bool
 	sendGated        bool
 	keyframeRequired bool
+	pausedAt         time.Time
+	dropReason       string
 	log              zerolog.Logger
+	logReady         bool
 	diag             *diag.Recorder
+}
+
+// safeLog returns the sender's logger, or a no-op one when the sender was built as a
+// bare literal and never had one installed: the zero zerolog.Logger has a nil writer
+// and panics on use.
+func (vs *videoSender) safeLog() *zerolog.Logger {
+	if !vs.logReady {
+		nop := zerolog.Nop()
+		return &nop
+	}
+	return &vs.log
+}
+
+// noteDropLocked names the reason outbound video is being discarded, once per change of
+// reason. The three drop paths below are otherwise silent, which makes a stalled
+// outbound stream indistinguishable from a stream that is flowing.
+func (vs *videoSender) noteDropLocked(reason string) {
+	if vs.dropReason == reason {
+		return
+	}
+	vs.dropReason = reason
+	vs.safeLog().Debug().
+		Str("reason", reason).
+		Bool("active", vs.active).
+		Bool("send_gated", vs.sendGated).
+		Bool("keyframe_required", vs.keyframeRequired).
+		Uint64("frame", vs.frame).
+		Msg("outbound video access unit dropped")
 }
 
 type mediaSrtcpSender struct {
@@ -1438,10 +1469,12 @@ func (vs *videoSender) protectAccessUnit(au []byte, duration time.Duration) [][]
 
 func (vs *videoSender) protectAccessUnitLocked(au []byte, duration time.Duration) [][]byte {
 	if !vs.active || vs.sendGated {
+		vs.noteDropLocked("sender inactive or gated")
 		return nil
 	}
 	idr := rtp.AUHasIDR(au)
 	if vs.keyframeRequired && !idr {
+		vs.noteDropLocked("waiting for recovery IDR")
 		return nil
 	}
 	nalus := rtp.SplitAnnexB(au)
@@ -1496,12 +1529,36 @@ func (vs *videoSender) protectAccessUnitLocked(au []byte, duration time.Duration
 	if len(packets) > 0 && idr {
 		vs.keyframeRequired = false
 	}
+	if len(packets) > 0 && vs.dropReason != "" {
+		vs.safeLog().Debug().
+			Str("cleared_reason", vs.dropReason).
+			Uint32("rtp_ts", vs.stream.RtpTimestamp()).
+			Bool("idr", idr).
+			Msg("outbound video resumed")
+		vs.dropReason = ""
+	}
 	return packets
 }
 
 func (vs *videoSender) enable(sendGated bool) {
 	vs.mu.Lock()
 	needsRecovery := !vs.active || (vs.sendGated && !sendGated)
+	// A pause emits no packets, so the stream's 90 kHz clock stood still while the
+	// SRTCP sender reports kept advertising live NTP times. Resuming without
+	// closing that gap makes the peer place every later frame in the past and drop
+	// it, so charge the elapsed pause to the clock before the first frame back.
+	if !vs.pausedAt.IsZero() {
+		if gap := time.Since(vs.pausedAt); gap > 0 && vs.stream != nil {
+			samples := videoRtpDurationSamples(gap)
+			vs.stream.AdvanceTimestamp(samples)
+			vs.safeLog().Debug().
+				Dur("pause", gap).
+				Uint32("advanced_samples", samples).
+				Uint32("rtp_ts", vs.stream.RtpTimestamp()).
+				Msg("video resumed; advanced RTP clock across the pause")
+		}
+		vs.pausedAt = time.Time{}
+	}
 	vs.active = true
 	vs.sendGated = sendGated
 	vs.keyframeRequired = vs.keyframeRequired || needsRecovery
@@ -1510,6 +1567,9 @@ func (vs *videoSender) enable(sendGated bool) {
 
 func (vs *videoSender) disable() {
 	vs.mu.Lock()
+	if vs.pausedAt.IsZero() {
+		vs.pausedAt = time.Now()
+	}
 	vs.active = false
 	vs.sendGated = false
 	vs.keyframeRequired = true
@@ -1565,6 +1625,15 @@ func (vs *videoSender) send(au []byte, duration time.Duration) {
 			Int("packets", sent).
 			Uint32("ssrc", vs.ssrc).
 			Msg("first video RTP sent to relay, outbound video flowing")
+	}
+	// The "first video RTP" line above latches, so without a recurring line there is
+	// no way to tell a live outbound stream from one that stopped after a toggle.
+	if sent > 0 && frame%100 == 0 {
+		vs.safeLog().Debug().
+			Uint64("frame", frame).
+			Int("packets", sent).
+			Uint32("rtp_ts", vs.stream.RtpTimestamp()).
+			Msg("outbound video still flowing")
 	}
 }
 

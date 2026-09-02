@@ -58,6 +58,7 @@ type engineCall struct {
 	localVideo        bool         // this client is sending, or has requested to send, video
 	remoteVideo       bool         // the peer is sending video to this client
 	videoGate         bool         // outbound upgrade is waiting for peer acceptance
+	videoOrientation  int          // quarter turns the peer must apply to our stream, latched across state changes
 	peerVideoUpgrade  bool         // the peer's inbound upgrade is waiting for local acceptance
 	videoTx           *videoSender // video send pipeline, live while media runs
 	appDataTx         *appDataSender
@@ -349,6 +350,7 @@ func (e *engine) setVideoEnabled(callID string, enabled bool) error {
 	m.localVideo = enabled
 	m.videoGate = false
 	to, creator, sender := m.from, m.creator, m.videoTx
+	orientation := m.videoOrientation
 	e.mu.Unlock()
 
 	if sender != nil {
@@ -362,10 +364,19 @@ func (e *engine) setVideoEnabled(callID string, enabled bool) error {
 	if enabled {
 		state, dec = signaling.VideoStateEnabled, signaling.VideoStateDecH264
 	}
+	// Every captured WhatsApp <video> stanza states device_orientation explicitly,
+	// including the stop. Omitting it here let the peer latch orientation 0 off the
+	// stanza that describes the stream and then ignore any later orientation-only
+	// stanza, so the display rotation never took effect.
 	node := signaling.BuildVideoStateWithParams(signaling.VideoStateParams{
 		CallID: callID, To: to, CallCreator: creator, WrapperID: e.nextCallNodeID(),
-		State: state, Dec: dec,
+		State: state, Dec: dec, DeviceOrientation: &orientation,
 	})
+	e.c.log.Debug().
+		Int("state", state).
+		Int("device_orientation", orientation).
+		Str("dec", dec).
+		Msg("announcing local video state")
 	err := e.transmitCallNode(context.Background(), node)
 	if err == nil || !enabled {
 		return err
@@ -388,15 +399,26 @@ func (e *engine) setVideoOrientation(callID string, orientation int) error {
 	}
 	e.mu.Lock()
 	m := e.calls[callID]
-	if m == nil || m.call == nil || m.call.State() == CallPhaseEnded || !m.localVideo {
+	if m == nil || m.call == nil || m.call.State() == CallPhaseEnded {
 		e.mu.Unlock()
-		return errors.New("meowcaller: call has no active video media")
+		return errors.New("meowcaller: call is not active")
 	}
 	to, creator := m.from, m.creator
+	// Latch it so every later state stanza restates the same orientation; a
+	// standalone orientation stanza alone does not survive a camera toggle.
+	m.videoOrientation = orientation
+	live := m.localVideo
 	e.mu.Unlock()
+	// With no camera announced yet there is no stream to describe, so latching is
+	// the whole job: the state=1 announcement will carry this orientation. Emitting
+	// a second state=1 immediately after the first invites the peer to dedupe it
+	// and keep orientation 0.
+	if !live {
+		return nil
+	}
 	node := signaling.BuildVideoStateWithParams(signaling.VideoStateParams{
 		CallID: callID, To: to, CallCreator: creator, WrapperID: e.nextCallNodeID(),
-		State: signaling.VideoStateEnabled, DeviceOrientation: &orientation,
+		State: signaling.VideoStateEnabled, Dec: signaling.VideoStateDecH264, DeviceOrientation: &orientation,
 	})
 	return e.transmitCallNode(context.Background(), node)
 }

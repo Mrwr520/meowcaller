@@ -7,6 +7,31 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### media/video-send — `implemented`
+
+- The outbound video RTP clock now skips forward over a pause in the frame
+  feed. `VideoRtpStream.NextPacket` only advances the 90 kHz clock for packets
+  it actually builds, so a camera toggled off resumed with a timestamp lagging
+  wall-clock by the whole pause while the SRTCP sender reports kept publishing
+  live NTP times — the peer maps such frames into the past and its jitter
+  buffer drops them. `AdvanceTimestamp` charges the elapsed gap on resume.
+  Confirmed live to advance the clock as intended (1123 ms pause charged as
+  101103 samples); **did not** restore the peer's picture after a camera
+  toggle, so it is a real defect fixed but not the cause of that symptom.
+- Local video state stanzas now restate `device_orientation`, latched per
+  call. `setVideoEnabled` omitted the attribute entirely, while every other
+  captured `<video>` stanza states it explicitly — including the stop.
+  `SetVideoOrientation` called before the camera is announced now only
+  latches instead of emitting a second `state=1`. Verified on the wire that
+  the announcement carries the value; the peer's rendered rotation did
+  **not** change, which points at RTP CVO rather than the stanza attribute.
+- The three silent drop paths in `videoSender.protectAccessUnit` now name
+  their reason once per change of reason, and a recurring line reports a
+  still-flowing stream. The "first video RTP sent" line latches, so an
+  outbound stream that died after a toggle was previously indistinguishable
+  from a healthy one. This instrumentation is what established that frames
+  keep flowing with a sane RTP timestamp after a camera toggle.
+
 ### media/video-reorder — `KAT-verified`
 
 - Added a wrap-aware RTP reorder buffer ahead of the H.264 access-unit

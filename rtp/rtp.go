@@ -392,6 +392,20 @@ func (s *VideoRtpStream) SetTimestampStride(tsStride uint32) bool {
 	return true
 }
 
+// AdvanceTimestamp moves the 90 kHz clock forward by samples without emitting a
+// packet.
+//
+// Deviation from the reference, which has no equivalent: NextPacket only advances
+// the clock for a packet it actually builds, so a sender that stops feeding frames
+// (camera toggled off) resumes with a timestamp lagging wall-clock by the whole
+// pause. The SRTCP sender reports keep publishing live NTP times against that
+// stale RTP clock, so the peer maps every later frame into the past and its jitter
+// buffer drops them for the rest of the call. Skipping the clock over the gap keeps
+// the RTP/NTP mapping honest across a pause.
+func (s *VideoRtpStream) AdvanceTimestamp(samples uint32) {
+	s.timestamp += samples
+}
+
 func (s *VideoRtpStream) NextPacket(lastInAccessUnit bool, mediaFrameInfo uint8) RtpHeader {
 	var frameNumber *uint16
 	if s.firstPacket {
